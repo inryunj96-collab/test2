@@ -272,6 +272,68 @@ function categoryOptionsHTML(cats, selectedId) {
   return cats.map((c) => `<option value="${c.id}" ${c.id === selectedId ? 'selected' : ''}>${escapeHTML(c.name)}</option>`).join('');
 }
 
+// 지출 등록 화면 안에서 바로 카테고리를 추가/삭제할 수 있는 인라인 패널
+function inlineCategoryManagerHTML(prefix) {
+  return `
+    <button type="button" class="btn-link inline-cat-toggle" id="${prefix}-cat-toggle">+ 카테고리 추가/관리</button>
+    <div class="inline-cat-panel hidden" id="${prefix}-cat-panel">
+      <div class="category-chip-list" id="${prefix}-cat-chip-list">${renderCategoryChips('expense')}</div>
+      <div class="field-row" id="${prefix}-cat-add-row">
+        <label class="field" style="margin-bottom:0;"><input type="text" id="${prefix}-cat-add-input" placeholder="새 카테고리 이름" /></label>
+        <button type="button" class="btn btn-primary btn-sm" id="${prefix}-cat-add-btn">추가</button>
+      </div>
+    </div>
+  `;
+}
+function bindInlineCategoryManager(box, prefix, selectEl, getSelectCats) {
+  const toggleBtn = box.querySelector(`#${prefix}-cat-toggle`);
+  const panel = box.querySelector(`#${prefix}-cat-panel`);
+  const chipList = box.querySelector(`#${prefix}-cat-chip-list`);
+  const addBtn = box.querySelector(`#${prefix}-cat-add-btn`);
+  const input = box.querySelector(`#${prefix}-cat-add-input`);
+
+  toggleBtn.addEventListener('click', () => {
+    panel.classList.toggle('hidden');
+    if (!panel.classList.contains('hidden')) input.focus();
+  });
+
+  function bindChipDeletes() {
+    chipList.querySelectorAll('.delete-cat-btn').forEach((b) => {
+      b.addEventListener('click', () => {
+        const id = b.dataset.id;
+        const usedCount = state.data.expenseItems.filter((i) => i.categoryId === id).length
+          + state.data.repeatTemplates.filter((t) => t.categoryId === id).length;
+        if (usedCount > 0 && !confirm(`이 카테고리를 사용하는 항목이 ${usedCount}개 있습니다. 그래도 삭제할까요?`)) return;
+        state.data.categories = state.data.categories.filter((c) => c.id !== id);
+        persist();
+        chipList.innerHTML = renderCategoryChips('expense');
+        bindChipDeletes();
+        selectEl.innerHTML = categoryOptionsHTML(getSelectCats());
+        showToast('카테고리가 삭제되었습니다.');
+      });
+    });
+  }
+  bindChipDeletes();
+
+  function handleAdd() {
+    const name = input.value.trim();
+    if (!name) return;
+    const newCat = { id: uid(), name, type: 'expense', deletable: true };
+    state.data.categories.push(newCat);
+    persist();
+    chipList.innerHTML = renderCategoryChips('expense');
+    bindChipDeletes();
+    selectEl.innerHTML = categoryOptionsHTML(getSelectCats(), newCat.id);
+    input.value = '';
+    showToast('카테고리가 추가되었습니다.');
+  }
+  addBtn.addEventListener('click', handleAdd);
+  // this input lives inside the modal's outer <form>, so Enter must not trigger that form's submit
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); handleAdd(); }
+  });
+}
+
 // ----------------------- 반복 지출 → 일 단위 항목 생성 -----------------------
 function materializeDate(dateStr) {
   const data = state.data;
@@ -688,6 +750,7 @@ function openExpenseRegisterModal() {
     <form id="expense-register-form">
       <label class="field"><span>날짜</span><input type="date" id="pi-date" value="${state.selectedDate}" required /></label>
       <label class="field"><span>카테고리</span><select id="pi-category">${categoryOptionsHTML(plannedExpenseCategories())}</select></label>
+      ${inlineCategoryManagerHTML('pi')}
       <label class="field"><span>지출 내용 (선택)</span><input type="text" id="pi-memo" placeholder="예: 팀 회식" /></label>
       <label class="field"><span>예상 금액</span><input type="text" inputmode="numeric" id="pi-amount" required placeholder="예: 15,000" /></label>
       ${repeatFieldsHTML()}
@@ -698,6 +761,7 @@ function openExpenseRegisterModal() {
       </div>
     </form>
   `);
+  bindInlineCategoryManager(box, 'pi', box.querySelector('#pi-category'), plannedExpenseCategories);
   bindRepeatFields(box, '#pi-date');
   bindAmountInput(box.querySelector('#pi-amount'));
   box.querySelector('#pi-cancel').onclick = closeModal;
@@ -743,6 +807,7 @@ function openUnplannedExpenseModal() {
     <form id="unplanned-expense-form">
       <label class="field"><span>날짜</span><input type="date" id="ue-date" value="${state.selectedDate}" required /></label>
       <label class="field"><span>카테고리</span><select id="ue-category">${categoryOptionsHTML(allExpenseCategories())}</select></label>
+      ${inlineCategoryManagerHTML('ue')}
       <label class="field"><span>실제 금액</span><input type="text" inputmode="numeric" id="ue-amount" required placeholder="예: 8,000" /></label>
       <label class="field"><span>결제수단</span>
         <select id="ue-payment">
@@ -762,6 +827,7 @@ function openUnplannedExpenseModal() {
     </form>
   `);
   bindAmountInput(box.querySelector('#ue-amount'));
+  bindInlineCategoryManager(box, 'ue', box.querySelector('#ue-category'), allExpenseCategories);
   box.querySelector('#ue-cancel').onclick = closeModal;
   box.querySelector('#unplanned-expense-form').addEventListener('submit', (e) => {
     e.preventDefault();
@@ -789,6 +855,7 @@ function openEditItemModal(id) {
     <form id="edit-item-form">
       ${item.templateId ? '<p class="list-item-sub" style="margin:-6px 0 12px;">🔁 반복 항목입니다. 수정 내용은 이 날짜에만 적용됩니다.</p>' : ''}
       <label class="field"><span>카테고리</span><select id="ei-category">${categoryOptionsHTML(item.planned ? plannedExpenseCategories() : allExpenseCategories(), item.categoryId)}</select></label>
+      ${inlineCategoryManagerHTML('ei')}
       <label class="field"><span>지출 내용 (선택)</span><input type="text" id="ei-memo" value="${escapeHTML(item.memo || '')}" placeholder="예: 팀 회식" /></label>
       <label class="field"><span>예상 금액</span><input type="text" inputmode="numeric" id="ei-expected" value="${item.expectedAmount != null ? formatAmountInputValue(String(item.expectedAmount)) : ''}" /></label>
       <label class="field"><span>실제 금액</span><input type="text" inputmode="numeric" id="ei-actual" value="${item.actualAmount != null ? formatAmountInputValue(String(item.actualAmount)) : ''}" placeholder="아직 체크 전이면 비워두세요" /></label>
@@ -811,6 +878,7 @@ function openEditItemModal(id) {
   `);
   bindAmountInput(box.querySelector('#ei-expected'));
   bindAmountInput(box.querySelector('#ei-actual'));
+  bindInlineCategoryManager(box, 'ei', box.querySelector('#ei-category'), () => (item.planned ? plannedExpenseCategories() : allExpenseCategories()));
   box.querySelector('#ei-cancel').onclick = closeModal;
   box.querySelector('#edit-item-form').addEventListener('submit', (e) => {
     e.preventDefault();
@@ -969,6 +1037,7 @@ function openRepeatTemplateModal() {
   const box = openModal('반복 지출 추가', `
     <form id="repeat-template-form">
       <label class="field"><span>카테고리</span><select id="rt-category">${categoryOptionsHTML(plannedExpenseCategories())}</select></label>
+      ${inlineCategoryManagerHTML('rt')}
       <label class="field"><span>지출 내용 (선택)</span><input type="text" id="rt-memo" placeholder="예: 넷플릭스 구독료" /></label>
       <label class="field"><span>예상 금액</span><input type="text" inputmode="numeric" id="rt-amount" required placeholder="예: 4,500" /></label>
       <label class="field"><span>시작일</span><input type="date" id="rt-start" value="${state.selectedDate}" required /></label>
@@ -1010,6 +1079,7 @@ function openRepeatTemplateModal() {
   }));
 
   bindAmountInput(box.querySelector('#rt-amount'));
+  bindInlineCategoryManager(box, 'rt', box.querySelector('#rt-category'), plannedExpenseCategories);
   box.querySelector('#rt-cancel').onclick = closeModal;
   box.querySelector('#repeat-template-form').addEventListener('submit', (e) => {
     e.preventDefault();

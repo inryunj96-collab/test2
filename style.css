@@ -778,6 +778,15 @@ button, input, select, textarea { font-family: inherit; }
 .fab-unplanned-btn .fab-icon { font-size: 14px; line-height: 1; }
 .fab-unplanned-btn:active { transform: scale(0.96); }
 
+.inline-cat-toggle { margin: -8px 0 14px; display: inline-block; }
+.inline-cat-panel {
+  background: var(--color-surface-2);
+  border-radius: var(--radius-md);
+  padding: 12px;
+  margin: -6px 0 14px;
+}
+.inline-cat-panel .category-chip-list { margin-bottom: 8px; }
+
 /* ===================== 목표설정 ===================== */
 
 .category-chip-list {
