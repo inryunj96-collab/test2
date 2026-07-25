@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+<title>오늘의 가계부</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<div id="app">
+
+  <!-- ===================== 인증 화면 ===================== -->
+  <section id="auth-screen" class="screen">
+    <div class="auth-card">
+      <div class="auth-logo">🌱 오늘의 가계부</div>
+      <p class="auth-sub">목표를 세우고, 오늘의 지출을 기록하며,<br/>차이의 이유를 함께 남겨보세요.</p>
+
+      <div class="auth-tabs">
+        <button type="button" class="auth-tab active" data-auth="login">로그인</button>
+        <button type="button" class="auth-tab" data-auth="signup">회원가입</button>
+      </div>
+
+      <form id="login-form" class="auth-form">
+        <label class="field">
+          <span>이메일</span>
+          <input type="email" id="login-email" required placeholder="you@example.com" />
+        </label>
+        <label class="field">
+          <span>비밀번호</span>
+          <input type="password" id="login-password" required placeholder="비밀번호" />
+        </label>
+        <p class="form-error" id="login-error"></p>
+        <button type="submit" class="btn btn-primary btn-block">로그인</button>
+      </form>
+
+      <form id="signup-form" class="auth-form hidden">
+        <label class="field">
+          <span>이메일</span>
+          <input type="email" id="signup-email" required placeholder="you@example.com" />
+        </label>
+        <label class="field">
+          <span>비밀번호</span>
+          <input type="password" id="signup-password" required placeholder="6자 이상" minlength="6" />
+        </label>
+        <label class="field">
+          <span>비밀번호 확인</span>
+          <input type="password" id="signup-password2" required placeholder="비밀번호 확인" minlength="6" />
+        </label>
+        <p class="form-error" id="signup-error"></p>
+        <button type="submit" class="btn btn-primary btn-block">회원가입</button>
+      </form>
+
+      <p class="auth-note">※ 프로토타입 버전으로 이 브라우저(localStorage)에만 계정과 데이터가 저장됩니다.</p>
+    </div>
+  </section>
+
+  <!-- ===================== 메인 화면 ===================== -->
+  <div id="main-screen" class="screen hidden">
+    <header class="app-header">
+      <div class="app-header-title">🌱 오늘의 가계부</div>
+      <div class="app-header-user">
+        <span id="header-email"></span>
+        <button type="button" id="logout-btn" class="btn-link">로그아웃</button>
+      </div>
+    </header>
+
+    <main class="app-main">
+      <section id="tab-dashboard" class="tab-content"></section>
+      <section id="tab-goals" class="tab-content hidden"></section>
+      <section id="tab-assets" class="tab-content hidden"></section>
+    </main>
+
+    <nav class="bottom-nav">
+      <button type="button" class="nav-btn active" data-tab="dashboard">
+        <span class="nav-icon">🏠</span><span>대시보드</span>
+      </button>
+      <button type="button" class="nav-btn" data-tab="goals">
+        <span class="nav-icon">🎯</span><span>목표설정</span>
+      </button>
+      <button type="button" class="nav-btn" data-tab="assets">
+        <span class="nav-icon">💰</span><span>자산관리</span>
+      </button>
+    </nav>
+  </div>
+
+  <!-- ===================== 모달 루트 ===================== -->
+  <div id="modal-root"></div>
+
+  <!-- ===================== 토스트 ===================== -->
+  <div id="toast" class="toast hidden"></div>
+
+</div>
+<script src="script.js"></script>
+</body>
+</html>
