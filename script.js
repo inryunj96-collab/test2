@@ -578,10 +578,10 @@ function renderExpenseItemCard(item) {
           <button type="button" class="complete-item-btn" data-id="${item.id}">완료</button>
         ` : ''}
       </div>
-      ${isOver ? `
+      ${(isOver || !item.planned) ? `
         <div class="expense-item-reason-row">
-          <span class="reason-icon">⚠️</span>
-          <input type="text" class="reason-input" data-id="${item.id}" placeholder="초과 사유를 적어주세요" value="${escapeHTML(item.reasonText || '')}" />
+          <span class="reason-icon">${isOver ? '⚠️' : '📝'}</span>
+          <input type="text" class="reason-input" data-id="${item.id}" placeholder="${isOver ? '초과 사유를 적어주세요' : '계획 외 지출 사유를 적어주세요'}" value="${escapeHTML(item.reasonText || '')}" />
         </div>` : ''}
     </div>`;
 }
@@ -624,10 +624,13 @@ function bindExpenseItemCards(container) {
       const card = e.currentTarget.closest('.expense-item-card');
       const parsed = parseAmountInputValue(card.querySelector('.actual-amount-input').value);
       if (isNaN(parsed)) { showToast('실제 금액을 입력해주세요.'); return; }
-      updateExpenseItem(id, {
+      const patch = {
         actualAmount: parsed,
         paymentMethod: card.querySelector('.payment-method-input').value || null,
-      });
+      };
+      const reasonInput = card.querySelector('.reason-input');
+      if (reasonInput) patch.reasonText = reasonInput.value.trim();
+      updateExpenseItem(id, patch);
       renderDashboard();
       showToast('저장되었습니다.');
     });
