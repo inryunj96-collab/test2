@@ -599,6 +599,7 @@ async function openHouseholdModal() {
     <div class="section-subtitle">멤버</div>
     <div id="member-list"><p class="empty-state">불러오는 중...</p></div>
     <div class="section-subtitle">친구 초대</div>
+    <p class="list-item-sub" style="margin:-2px 0 8px;">별도의 메일은 발송되지 않아요. 초대 후 친구에게 이 이메일로 로그인/가입해달라고 직접 알려주세요.</p>
     <form class="field-row" id="invite-form">
       <label class="field" style="margin-bottom:0;"><input type="email" id="invite-email" placeholder="친구 이메일" required /></label>
       <button type="submit" class="btn btn-primary btn-sm" style="align-self:flex-end;">초대</button>
