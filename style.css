@@ -350,6 +350,7 @@ button, input, select, textarea { font-family: inherit; }
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 8px;
   padding: 16px 18px;
   background: rgba(255, 249, 244, 0.92);
   backdrop-filter: blur(6px);
@@ -359,14 +360,29 @@ button, input, select, textarea { font-family: inherit; }
 .app-header-title {
   font-size: 17px;
   font-weight: 800;
+  flex-shrink: 0;
 }
 
 .app-header-user {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
+  min-width: 0;
   font-size: 12px;
   color: var(--color-text-soft);
+}
+
+#header-username {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 84px;
+}
+
+.app-header-user .btn-link {
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 
 .app-main {

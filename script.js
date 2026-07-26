@@ -236,18 +236,24 @@ async function fetchMyHousehold() {
 }
 
 async function fetchHouseholdMembers(householdId) {
-  const { data, error } = await sb
+  const { data: members, error } = await sb
     .from('household_members')
-    .select('user_id, role, profiles(full_name, email)')
+    .select('user_id, role')
     .eq('household_id', householdId)
     .order('joined_at');
-  if (error || !data) return [];
-  return data.map((row) => ({
-    userId: row.user_id,
-    role: row.role,
-    name: row.profiles?.full_name || row.profiles?.email || '알 수 없음',
-    email: row.profiles?.email || '',
-  }));
+  if (error || !members) return [];
+  const userIds = members.map((m) => m.user_id);
+  const { data: profiles } = await sb.from('profiles').select('id, full_name, email').in('id', userIds);
+  const profileById = new Map((profiles || []).map((p) => [p.id, p]));
+  return members.map((m) => {
+    const p = profileById.get(m.user_id);
+    return {
+      userId: m.user_id,
+      role: m.role,
+      name: p?.full_name || p?.email || '알 수 없음',
+      email: p?.email || '',
+    };
+  });
 }
 
 async function fetchSentInvites(householdId) {
@@ -583,6 +589,10 @@ function openIncomingInviteModal(invite) {
 }
 
 async function openHouseholdModal() {
+  if (!state.household) {
+    showToast('가계부 정보를 불러오지 못했어요. 새로고침 후 다시 시도해주세요.');
+    return;
+  }
   const householdId = state.household.id;
   const box = openModal('함께 쓰기', `
     <p class="household-name">${escapeHTML(state.household.name)}</p>
