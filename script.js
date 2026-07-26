@@ -14,6 +14,7 @@ const WEEKDAY_LABELS = ['일', '월', '화', '수', '목', '금', '토'];
 // ----------------------- 전역 상태 -----------------------
 const state = {
   user: null,
+  household: null,
   data: null,
   tab: 'dashboard',
   selectedDate: todayStr(),
@@ -107,7 +108,7 @@ function categoryFromDb(row) {
   return { id: row.id, name: row.name, type: row.type, deletable: row.deletable, system: row.system };
 }
 function categoryToDb(c) {
-  return { id: c.id, name: c.name, type: c.type, deletable: c.deletable, system: !!c.system };
+  return { id: c.id, name: c.name, type: c.type, deletable: c.deletable, system: !!c.system, household_id: state.household.id };
 }
 function templateFromDb(row) {
   const t = {
@@ -125,6 +126,7 @@ function templateToDb(t) {
     expected_amount: t.expectedAmount, repeat_type: t.repeatType,
     start_date: t.startDate, active: t.active,
     weekdays: t.weekdays || null, day_of_month: t.dayOfMonth ?? null,
+    household_id: state.household.id,
   };
 }
 function itemFromDb(row) {
@@ -142,13 +144,14 @@ function itemToDb(it) {
     expected_amount: it.expectedAmount, actual_amount: it.actualAmount,
     payment_method: it.paymentMethod, planned: it.planned,
     reason_text: it.reasonText || '', template_id: it.templateId,
+    household_id: state.household.id,
   };
 }
 function assetFromDb(row) {
   return { id: row.id, name: row.name, amount: Number(row.amount), updatedAt: row.updated_at };
 }
 function assetToDb(a) {
-  return { id: a.id, name: a.name, amount: a.amount, updated_at: a.updatedAt };
+  return { id: a.id, name: a.name, amount: a.amount, updated_at: a.updatedAt, household_id: state.household.id };
 }
 
 // insert/update/delete 헬퍼 — 각각 얇은 async 래퍼
@@ -221,6 +224,69 @@ async function resyncData() {
   renderTab(state.tab);
 }
 
+// ----------------------- 데이터 계층 (공유 가계부) -----------------------
+async function fetchMyHousehold() {
+  const { data, error } = await sb
+    .from('household_members')
+    .select('household_id, households(id, name)')
+    .eq('user_id', state.user.id)
+    .maybeSingle();
+  if (error || !data) return null;
+  return { id: data.households.id, name: data.households.name };
+}
+
+async function fetchHouseholdMembers(householdId) {
+  const { data, error } = await sb
+    .from('household_members')
+    .select('user_id, role, profiles(full_name, email)')
+    .eq('household_id', householdId)
+    .order('joined_at');
+  if (error || !data) return [];
+  return data.map((row) => ({
+    userId: row.user_id,
+    role: row.role,
+    name: row.profiles?.full_name || row.profiles?.email || '알 수 없음',
+    email: row.profiles?.email || '',
+  }));
+}
+
+async function fetchSentInvites(householdId) {
+  const { data, error } = await sb
+    .from('household_invites')
+    .select('*')
+    .eq('household_id', householdId)
+    .eq('status', 'pending')
+    .order('created_at');
+  return error ? [] : (data || []);
+}
+
+async function fetchIncomingInvite(email) {
+  const { data, error } = await sb
+    .from('household_invites')
+    .select('*, households(name)')
+    .ilike('invited_email', email)
+    .eq('status', 'pending')
+    .order('created_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return error ? null : data;
+}
+
+function dbInsertInvite(householdId, email) {
+  return sb.from('household_invites').insert({
+    household_id: householdId, invited_email: email.toLowerCase(), invited_by: state.user.id,
+  });
+}
+function dbUpdateInviteStatus(id, status) {
+  return sb.from('household_invites').update({ status, responded_at: new Date().toISOString() }).eq('id', id);
+}
+function dbInsertHouseholdMember(householdId) {
+  return sb.from('household_members').insert({ household_id: householdId, user_id: state.user.id, role: 'member' });
+}
+function dbDeleteHouseholdMember(householdId, userId) {
+  return sb.from('household_members').delete().eq('household_id', householdId).eq('user_id', userId);
+}
+
 // ----------------------- 인증 (Supabase Auth) -----------------------
 let currentAuthUserId = null; // enterApp 중복 실행 방지 가드
 
@@ -243,13 +309,22 @@ function showAuthScreen() {
   document.getElementById('main-screen').classList.add('hidden');
 }
 
+function displayNameOf(user) {
+  return user.user_metadata?.full_name || user.user_metadata?.name || user.email;
+}
+
 async function enterApp(user) {
   state.user = { id: user.id, email: user.email };
+  state.household = await fetchMyHousehold();
+  document.getElementById('header-username').textContent = displayNameOf(user);
+
+  const incomingInvite = await fetchIncomingInvite(user.email);
+  if (incomingInvite) openIncomingInviteModal(incomingInvite);
+
   state.data = await fetchAllData();
   document.getElementById('boot-loading').classList.add('hidden');
   document.getElementById('auth-screen').classList.add('hidden');
   document.getElementById('main-screen').classList.remove('hidden');
-  document.getElementById('header-email').textContent = user.email;
   switchTab('dashboard');
 }
 
@@ -305,6 +380,10 @@ async function handleLogin(e) {
 
 async function handleLogout() {
   await sb.auth.signOut();
+}
+
+async function handleGoogleLogin() {
+  await sb.auth.signInWithOAuth({ provider: 'google' });
 }
 
 // ----------------------- 탭 전환 -----------------------
@@ -469,6 +548,120 @@ function openModal(title, bodyHTML) {
 }
 function closeModal() {
   document.getElementById('modal-root').innerHTML = '';
+}
+
+// ----------------------- 함께 쓰기 (가계부 멤버/초대) -----------------------
+function openIncomingInviteModal(invite) {
+  const box = openModal('초대가 도착했어요', `
+    <p class="household-name">'${escapeHTML(invite.households?.name || '가계부')}'에 초대되었습니다.<br/>수락하면 그 가계부의 지출 내역을 함께 조회·관리할 수 있어요.</p>
+    <p class="list-item-sub">단, 수락하면 현재 보고 있는 나만의 가계부는 더 이상 화면에 표시되지 않아요.</p>
+    <div class="modal-actions">
+      <button type="button" class="btn btn-outline" id="invite-decline">거절</button>
+      <button type="button" class="btn btn-primary" id="invite-accept">수락</button>
+    </div>
+  `);
+  box.querySelector('#invite-decline').onclick = async () => {
+    await dbUpdateInviteStatus(invite.id, 'declined');
+    closeModal();
+  };
+  box.querySelector('#invite-accept').onclick = async () => {
+    const oldHouseholdId = state.household?.id;
+    const { error: joinError } = await dbInsertHouseholdMember(invite.household_id);
+    if (joinError) { showToast('초대 수락에 실패했어요. 다시 시도해주세요.'); return; }
+    await dbUpdateInviteStatus(invite.id, 'accepted');
+    if (oldHouseholdId && oldHouseholdId !== invite.household_id) {
+      await dbDeleteHouseholdMember(oldHouseholdId, state.user.id);
+    }
+    closeModal();
+    showToast('가계부에 합류했습니다! 🎉');
+    state.household = await fetchMyHousehold();
+    await resyncData();
+  };
+}
+
+async function openHouseholdModal() {
+  const householdId = state.household.id;
+  const box = openModal('함께 쓰기', `
+    <p class="household-name">${escapeHTML(state.household.name)}</p>
+    <div class="section-subtitle">멤버</div>
+    <div id="member-list"><p class="empty-state">불러오는 중...</p></div>
+    <div class="section-subtitle">친구 초대</div>
+    <form class="field-row" id="invite-form">
+      <label class="field" style="margin-bottom:0;"><input type="email" id="invite-email" placeholder="친구 이메일" required /></label>
+      <button type="submit" class="btn btn-primary btn-sm" style="align-self:flex-end;">초대</button>
+    </form>
+    <p class="form-error" id="invite-error"></p>
+    <div class="section-subtitle">보낸 초대</div>
+    <div id="sent-invite-list"><p class="empty-state">불러오는 중...</p></div>
+  `);
+
+  async function refreshMembers() {
+    const members = await fetchHouseholdMembers(householdId);
+    box.querySelector('#member-list').innerHTML = members.map((m) => `
+      <div class="member-row" data-user-id="${m.userId}">
+        <div class="member-info">
+          <span class="member-name">${escapeHTML(m.name)} ${m.userId === state.user.id ? '<span class="pill pill-neutral">나</span>' : ''} ${m.role === 'owner' ? '<span class="pill pill-mint">소유자</span>' : ''}</span>
+          <span class="member-email">${escapeHTML(m.email)}</span>
+        </div>
+        ${m.userId === state.user.id
+          ? (m.role !== 'owner' ? '<button type="button" class="btn-link leave-household-btn">나가기</button>' : '')
+          : '<button type="button" class="btn-link remove-member-btn" data-user-id="' + m.userId + '">내보내기</button>'}
+      </div>
+    `).join('');
+
+    box.querySelector('.leave-household-btn')?.addEventListener('click', async () => {
+      if (!confirm('이 가계부에서 나갈까요?')) return;
+      await dbDeleteHouseholdMember(householdId, state.user.id);
+      closeModal();
+      showToast('가계부에서 나갔습니다.');
+      window.location.reload();
+    });
+    box.querySelectorAll('.remove-member-btn').forEach((b) => {
+      b.addEventListener('click', async () => {
+        if (!confirm('이 멤버를 내보낼까요?')) return;
+        await dbDeleteHouseholdMember(householdId, b.dataset.userId);
+        refreshMembers();
+        showToast('멤버를 내보냈습니다.');
+      });
+    });
+  }
+
+  async function refreshSentInvites() {
+    const invites = await fetchSentInvites(householdId);
+    box.querySelector('#sent-invite-list').innerHTML = invites.length
+      ? invites.map((inv) => `
+        <div class="invite-row" data-id="${inv.id}">
+          <span class="invite-email">${escapeHTML(inv.invited_email)}</span>
+          <span class="invite-status">대기중 <button type="button" class="btn-link cancel-invite-btn" data-id="${inv.id}">취소</button></span>
+        </div>
+      `).join('')
+      : '<p class="empty-state">보낸 초대가 없습니다.</p>';
+
+    box.querySelectorAll('.cancel-invite-btn').forEach((b) => {
+      b.addEventListener('click', async () => {
+        await dbUpdateInviteStatus(b.dataset.id, 'declined');
+        refreshSentInvites();
+        showToast('초대를 취소했습니다.');
+      });
+    });
+  }
+
+  refreshMembers();
+  refreshSentInvites();
+
+  box.querySelector('#invite-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const input = box.querySelector('#invite-email');
+    const errorEl = box.querySelector('#invite-error');
+    const email = input.value.trim().toLowerCase();
+    errorEl.textContent = '';
+    if (email === state.user.email.toLowerCase()) { errorEl.textContent = '본인은 초대할 수 없어요.'; return; }
+    const { error } = await dbInsertInvite(householdId, email);
+    if (error) { errorEl.textContent = '초대에 실패했어요. 다시 시도해주세요.'; return; }
+    input.value = '';
+    showToast('초대를 보냈습니다. 친구에게 이 이메일로 로그인/가입해달라고 알려주세요.');
+    refreshSentInvites();
+  });
 }
 
 // =========================================================
@@ -1290,6 +1483,8 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('login-form').addEventListener('submit', handleLogin);
   document.getElementById('signup-form').addEventListener('submit', handleSignup);
   document.getElementById('logout-btn').addEventListener('click', handleLogout);
+  document.getElementById('google-login-btn').addEventListener('click', handleGoogleLogin);
+  document.getElementById('household-btn').addEventListener('click', openHouseholdModal);
 
   document.querySelectorAll('.nav-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
