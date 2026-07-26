@@ -198,6 +198,36 @@ button, input, select, textarea { font-family: inherit; }
   padding: 24px 10px;
 }
 
+/* ===================== 로딩 화면 ===================== */
+
+.boot-loading {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(160deg, #FFF3EC 0%, #FDEFF8 45%, #EFF3FC 100%);
+}
+.boot-loading-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  color: var(--color-text-soft);
+  font-size: 13px;
+  font-weight: 600;
+}
+.boot-spinner {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 3px solid var(--color-primary-soft);
+  border-top-color: var(--color-primary);
+  animation: boot-spin 0.8s linear infinite;
+}
+@keyframes boot-spin {
+  to { transform: rotate(360deg); }
+}
+
 /* ===================== 인증 화면 ===================== */
 
 #auth-screen {

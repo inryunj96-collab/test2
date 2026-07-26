@@ -9,8 +9,16 @@
 <body>
 <div id="app">
 
+  <!-- ===================== 로딩 화면 ===================== -->
+  <section id="boot-loading" class="screen boot-loading">
+    <div class="boot-loading-inner">
+      <div class="boot-spinner"></div>
+      <p>불러오는 중...</p>
+    </div>
+  </section>
+
   <!-- ===================== 인증 화면 ===================== -->
-  <section id="auth-screen" class="screen">
+  <section id="auth-screen" class="screen hidden">
     <div class="auth-card">
       <div class="auth-logo">🌱 오늘의 가계부</div>
       <p class="auth-sub">목표를 세우고, 오늘의 지출을 기록하며,<br/>차이의 이유를 함께 남겨보세요.</p>
@@ -50,7 +58,7 @@
         <button type="submit" class="btn btn-primary btn-block">회원가입</button>
       </form>
 
-      <p class="auth-note">※ 프로토타입 버전으로 이 브라우저(localStorage)에만 계정과 데이터가 저장됩니다.</p>
+      <p class="auth-note">가입하신 이메일과 비밀번호는 Supabase를 통해 안전하게 저장되며, 어떤 기기에서 로그인해도 같은 데이터를 볼 수 있습니다.</p>
     </div>
   </section>
 
@@ -90,6 +98,7 @@
   <div id="toast" class="toast hidden"></div>
 
 </div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.110.8/dist/umd/supabase.js"></script>
 <script src="script.js"></script>
 </body>
 </html>

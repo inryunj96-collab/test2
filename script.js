@@ -1,15 +1,14 @@
 'use strict';
 
 /* =========================================================
-   오늘의 가계부 - 1단계(핵심 골격) 프로토타입
-   저장소: 브라우저 localStorage (Supabase 연동 전 단계)
-   ※ 비밀번호도 localStorage에 평문으로 저장되는 데모용 인증입니다.
-     실서비스 전환 시 Supabase Auth로 반드시 교체해야 합니다.
+   오늘의 가계부
+   저장소: Supabase (Auth + Postgres, RLS로 사용자별 데이터 격리)
    ========================================================= */
 
 // ----------------------- 상수 -----------------------
-const STORAGE_USERS = 'budgetapp_users';
-const STORAGE_SESSION = 'budgetapp_session';
+const SUPABASE_URL = 'https://masmhbaryqinyqpbobqn.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1hc21oYmFyeXFpbnlxcGJvYnFuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODUwMTcyMDksImV4cCI6MjEwMDU5MzIwOX0.0xyi6lt35vLyciCWmGvUqjAvshYX2D-LDcntw-zNXdc';
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const WEEKDAY_LABELS = ['일', '월', '화', '수', '목', '금', '토'];
 
 // ----------------------- 전역 상태 -----------------------
@@ -25,7 +24,7 @@ const state = {
 
 // ----------------------- 유틸 -----------------------
 function uid() {
-  return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
+  return crypto.randomUUID();
 }
 
 function escapeHTML(str) {
@@ -102,135 +101,210 @@ function showToast(msg) {
   showToast._timer = setTimeout(() => t.classList.add('hidden'), 2200);
 }
 
-// ----------------------- 저장소 -----------------------
-function getUsers() {
-  try { return JSON.parse(localStorage.getItem(STORAGE_USERS)) || []; }
-  catch { return []; }
+// ----------------------- 데이터 계층 (Supabase) -----------------------
+// DB row(snake_case) <-> 앱 state(camelCase) 매퍼
+function categoryFromDb(row) {
+  return { id: row.id, name: row.name, type: row.type, deletable: row.deletable, system: row.system };
 }
-function saveUsers(users) {
-  localStorage.setItem(STORAGE_USERS, JSON.stringify(users));
+function categoryToDb(c) {
+  return { id: c.id, name: c.name, type: c.type, deletable: c.deletable, system: !!c.system };
 }
-function getSession() {
-  try { return JSON.parse(localStorage.getItem(STORAGE_SESSION)); }
-  catch { return null; }
+function templateFromDb(row) {
+  const t = {
+    id: row.id, categoryId: row.category_id, memo: row.memo || '',
+    expectedAmount: Number(row.expected_amount), repeatType: row.repeat_type,
+    startDate: row.start_date, active: row.active,
+  };
+  if (row.weekdays) t.weekdays = row.weekdays;
+  if (row.day_of_month != null) t.dayOfMonth = row.day_of_month;
+  return t;
 }
-function setSession(userId) {
-  localStorage.setItem(STORAGE_SESSION, JSON.stringify({ userId }));
-}
-function clearSession() {
-  localStorage.removeItem(STORAGE_SESSION);
-}
-function dataKey(userId) {
-  return `budgetapp_data_${userId}`;
-}
-function createDefaultData() {
+function templateToDb(t) {
   return {
-    categories: [
-      { id: uid(), name: '식비', type: 'expense', deletable: true },
-      { id: uid(), name: '교통', type: 'expense', deletable: true },
-      { id: uid(), name: '쇼핑', type: 'expense', deletable: true },
-      { id: uid(), name: '문화/여가', type: 'expense', deletable: true },
-      { id: uid(), name: '주거/공과금', type: 'expense', deletable: true },
-      { id: uid(), name: '의료/건강', type: 'expense', deletable: true },
-      { id: uid(), name: '기타', type: 'expense', deletable: true },
-      { id: uid(), name: '계획 외 지출', type: 'expense', deletable: false, system: true },
-      { id: uid(), name: '월급', type: 'income', deletable: true },
-      { id: uid(), name: '금융수익', type: 'income', deletable: true },
-      { id: uid(), name: '기타 부대수익', type: 'income', deletable: true },
-    ],
-    repeatTemplates: [],
-    expenseItems: [],
-    assets: [],
-    settings: { defaultLandingPage: 'dashboard' },
+    id: t.id, category_id: t.categoryId, memo: t.memo || '',
+    expected_amount: t.expectedAmount, repeat_type: t.repeatType,
+    start_date: t.startDate, active: t.active,
+    weekdays: t.weekdays || null, day_of_month: t.dayOfMonth ?? null,
   };
 }
-function getData(userId) {
-  try {
-    const raw = JSON.parse(localStorage.getItem(dataKey(userId)));
-    if (raw) return raw;
-  } catch { /* fallthrough */ }
-  const fresh = createDefaultData();
-  saveData(userId, fresh);
-  return fresh;
+function itemFromDb(row) {
+  return {
+    id: row.id, date: row.date, categoryId: row.category_id, memo: row.memo || '',
+    expectedAmount: row.expected_amount != null ? Number(row.expected_amount) : null,
+    actualAmount: row.actual_amount != null ? Number(row.actual_amount) : null,
+    paymentMethod: row.payment_method, planned: row.planned,
+    reasonText: row.reason_text || '', templateId: row.template_id,
+  };
 }
-function saveData(userId, data) {
-  localStorage.setItem(dataKey(userId), JSON.stringify(data));
+function itemToDb(it) {
+  return {
+    id: it.id, date: it.date, category_id: it.categoryId, memo: it.memo || '',
+    expected_amount: it.expectedAmount, actual_amount: it.actualAmount,
+    payment_method: it.paymentMethod, planned: it.planned,
+    reason_text: it.reasonText || '', template_id: it.templateId,
+  };
 }
-function persist() {
-  if (state.user) saveData(state.user.id, state.data);
+function assetFromDb(row) {
+  return { id: row.id, name: row.name, amount: Number(row.amount), updatedAt: row.updated_at };
+}
+function assetToDb(a) {
+  return { id: a.id, name: a.name, amount: a.amount, updated_at: a.updatedAt };
 }
 
-// ----------------------- 인증 -----------------------
-function initSession() {
-  const session = getSession();
-  if (session && session.userId) {
-    const user = getUsers().find((u) => u.id === session.userId);
-    if (user) { loginSuccess(user); return; }
-    clearSession();
-  }
-  showAuthScreen();
+// insert/update/delete 헬퍼 — 각각 얇은 async 래퍼
+function dbInsertCategory(cat) { return sb.from('categories').insert(categoryToDb(cat)); }
+function dbDeleteCategory(id) { return sb.from('categories').delete().eq('id', id); }
+
+function dbInsertTemplate(t) { return sb.from('repeat_templates').insert(templateToDb(t)); }
+function dbUpdateTemplate(id, patch) {
+  const dbPatch = {};
+  if ('active' in patch) dbPatch.active = patch.active;
+  return sb.from('repeat_templates').update(dbPatch).eq('id', id);
 }
+function dbDeleteTemplate(id) { return sb.from('repeat_templates').delete().eq('id', id); }
+
+function dbInsertExpenseItem(it) { return sb.from('expense_items').insert(itemToDb(it)); }
+function dbInsertExpenseItemsBatch(items) { return sb.from('expense_items').insert(items.map(itemToDb)); }
+function dbUpdateExpenseItem(id, patch) {
+  const dbPatch = {};
+  if ('categoryId' in patch) dbPatch.category_id = patch.categoryId;
+  if ('memo' in patch) dbPatch.memo = patch.memo;
+  if ('expectedAmount' in patch) dbPatch.expected_amount = patch.expectedAmount;
+  if ('actualAmount' in patch) dbPatch.actual_amount = patch.actualAmount;
+  if ('paymentMethod' in patch) dbPatch.payment_method = patch.paymentMethod;
+  if ('reasonText' in patch) dbPatch.reason_text = patch.reasonText;
+  return sb.from('expense_items').update(dbPatch).eq('id', id);
+}
+function dbDeleteExpenseItem(id) { return sb.from('expense_items').delete().eq('id', id); }
+
+function dbInsertAsset(a) { return sb.from('assets').insert(assetToDb(a)); }
+function dbUpdateAsset(id, patch) {
+  const dbPatch = {};
+  if ('name' in patch) dbPatch.name = patch.name;
+  if ('amount' in patch) dbPatch.amount = patch.amount;
+  if ('updatedAt' in patch) dbPatch.updated_at = patch.updatedAt;
+  return sb.from('assets').update(dbPatch).eq('id', id);
+}
+function dbDeleteAsset(id) { return sb.from('assets').delete().eq('id', id); }
+
+// 화면은 이미 낙관적으로 갱신된 뒤 이 함수가 백그라운드로 서버에 반영한다.
+// 실패하면 토스트로 알리고 서버 상태로 다시 동기화해서 어긋남을 막는다.
+async function syncWrite(promiseFactory) {
+  try {
+    const { error } = await promiseFactory();
+    if (error) throw error;
+  } catch (err) {
+    console.error(err);
+    showToast('저장에 실패했어요. 다시 시도해주세요.');
+    await resyncData();
+  }
+}
+
+async function fetchAllData() {
+  const [catRes, tplRes, itemRes, assetRes] = await Promise.all([
+    sb.from('categories').select('*').order('created_at'),
+    sb.from('repeat_templates').select('*').order('created_at'),
+    sb.from('expense_items').select('*'),
+    sb.from('assets').select('*').order('created_at'),
+  ]);
+  return {
+    categories: (catRes.data || []).map(categoryFromDb),
+    repeatTemplates: (tplRes.data || []).map(templateFromDb),
+    expenseItems: (itemRes.data || []).map(itemFromDb),
+    assets: (assetRes.data || []).map(assetFromDb),
+  };
+}
+
+async function resyncData() {
+  if (!state.user) return;
+  state.data = await fetchAllData();
+  renderTab(state.tab);
+}
+
+// ----------------------- 인증 (Supabase Auth) -----------------------
+let currentAuthUserId = null; // enterApp 중복 실행 방지 가드
+
+sb.auth.onAuthStateChange((_event, session) => {
+  if (session && session.user) {
+    if (currentAuthUserId === session.user.id && state.data) return;
+    currentAuthUserId = session.user.id;
+    enterApp(session.user);
+  } else {
+    currentAuthUserId = null;
+    state.user = null;
+    state.data = null;
+    showAuthScreen();
+  }
+});
 
 function showAuthScreen() {
+  document.getElementById('boot-loading').classList.add('hidden');
   document.getElementById('auth-screen').classList.remove('hidden');
   document.getElementById('main-screen').classList.add('hidden');
 }
 
-function loginSuccess(user) {
+async function enterApp(user) {
   state.user = { id: user.id, email: user.email };
-  state.data = getData(user.id);
+  state.data = await fetchAllData();
+  document.getElementById('boot-loading').classList.add('hidden');
   document.getElementById('auth-screen').classList.add('hidden');
   document.getElementById('main-screen').classList.remove('hidden');
   document.getElementById('header-email').textContent = user.email;
-  switchTab(state.data.settings.defaultLandingPage || 'dashboard');
+  switchTab('dashboard');
 }
 
-function handleSignup(e) {
+function mapAuthError(error) {
+  const msg = error && error.message || '';
+  if (msg.includes('already registered')) return '이미 가입된 이메일입니다.';
+  if (msg.includes('Password should be')) return '비밀번호는 6자 이상이어야 합니다.';
+  if (msg.includes('Invalid login credentials')) return '이메일 또는 비밀번호가 올바르지 않습니다.';
+  return '오류가 발생했습니다. 잠시 후 다시 시도해주세요.';
+}
+
+async function handleSignup(e) {
   e.preventDefault();
   const email = document.getElementById('signup-email').value.trim().toLowerCase();
   const pw = document.getElementById('signup-password').value;
   const pw2 = document.getElementById('signup-password2').value;
   const errorEl = document.getElementById('signup-error');
+  const submitBtn = e.target.querySelector('button[type="submit"]');
   errorEl.textContent = '';
 
   if (pw.length < 6) { errorEl.textContent = '비밀번호는 6자 이상이어야 합니다.'; return; }
   if (pw !== pw2) { errorEl.textContent = '비밀번호가 일치하지 않습니다.'; return; }
 
-  const users = getUsers();
-  if (users.some((u) => u.email === email)) {
-    errorEl.textContent = '이미 가입된 이메일입니다.';
+  submitBtn.disabled = true;
+  const { data, error } = await sb.auth.signUp({ email, password: pw });
+  submitBtn.disabled = false;
+
+  if (error) { errorEl.textContent = mapAuthError(error); return; }
+  if (!data.session) {
+    errorEl.textContent = '가입 확인 메일을 보냈습니다. 메일함에서 링크를 눌러 인증을 완료해주세요.';
     return;
   }
-  const user = { id: uid(), email, password: pw };
-  users.push(user);
-  saveUsers(users);
-  saveData(user.id, createDefaultData());
-  setSession(user.id);
   document.getElementById('signup-form').reset();
-  loginSuccess(user);
   showToast('회원가입이 완료되었습니다. 환영해요! 🌱');
+  // 세션이 생기면 onAuthStateChange가 자동으로 enterApp을 실행함
 }
 
-function handleLogin(e) {
+async function handleLogin(e) {
   e.preventDefault();
   const email = document.getElementById('login-email').value.trim().toLowerCase();
   const pw = document.getElementById('login-password').value;
   const errorEl = document.getElementById('login-error');
+  const submitBtn = e.target.querySelector('button[type="submit"]');
   errorEl.textContent = '';
 
-  const user = getUsers().find((u) => u.email === email && u.password === pw);
-  if (!user) { errorEl.textContent = '이메일 또는 비밀번호가 올바르지 않습니다.'; return; }
+  submitBtn.disabled = true;
+  const { error } = await sb.auth.signInWithPassword({ email, password: pw });
+  submitBtn.disabled = false;
 
-  setSession(user.id);
+  if (error) { errorEl.textContent = mapAuthError(error); return; }
   document.getElementById('login-form').reset();
-  loginSuccess(user);
 }
 
-function handleLogout() {
-  clearSession();
-  state.user = null;
-  state.data = null;
-  showAuthScreen();
+async function handleLogout() {
+  await sb.auth.signOut();
 }
 
 // ----------------------- 탭 전환 -----------------------
@@ -305,11 +379,11 @@ function bindInlineCategoryManager(box, prefix, selectEl, getSelectCats) {
           + state.data.repeatTemplates.filter((t) => t.categoryId === id).length;
         if (usedCount > 0 && !confirm(`이 카테고리를 사용하는 항목이 ${usedCount}개 있습니다. 그래도 삭제할까요?`)) return;
         state.data.categories = state.data.categories.filter((c) => c.id !== id);
-        persist();
         chipList.innerHTML = renderCategoryChips('expense');
         bindChipDeletes();
         selectEl.innerHTML = categoryOptionsHTML(getSelectCats());
         showToast('카테고리가 삭제되었습니다.');
+        syncWrite(() => dbDeleteCategory(id));
       });
     });
   }
@@ -320,12 +394,12 @@ function bindInlineCategoryManager(box, prefix, selectEl, getSelectCats) {
     if (!name) return;
     const newCat = { id: uid(), name, type: 'expense', deletable: true };
     state.data.categories.push(newCat);
-    persist();
     chipList.innerHTML = renderCategoryChips('expense');
     bindChipDeletes();
     selectEl.innerHTML = categoryOptionsHTML(getSelectCats(), newCat.id);
     input.value = '';
     showToast('카테고리가 추가되었습니다.');
+    syncWrite(() => dbInsertCategory(newCat));
   }
   addBtn.addEventListener('click', handleAdd);
   // this input lives inside the modal's outer <form>, so Enter must not trigger that form's submit
@@ -337,7 +411,7 @@ function bindInlineCategoryManager(box, prefix, selectEl, getSelectCats) {
 // ----------------------- 반복 지출 → 일 단위 항목 생성 -----------------------
 function materializeDate(dateStr) {
   const data = state.data;
-  let changed = false;
+  const newItems = [];
   data.repeatTemplates.forEach((t) => {
     if (!t.active || dateStr < t.startDate) return;
     let matches = false;
@@ -350,14 +424,15 @@ function materializeDate(dateStr) {
     if (!matches) return;
     const exists = data.expenseItems.some((it) => it.templateId === t.id && it.date === dateStr);
     if (!exists) {
-      data.expenseItems.push({
+      const newItem = {
         id: uid(), date: dateStr, categoryId: t.categoryId, memo: t.memo || '', expectedAmount: t.expectedAmount,
         actualAmount: null, paymentMethod: null, planned: true, reasonText: '', templateId: t.id,
-      });
-      changed = true;
+      };
+      data.expenseItems.push(newItem);
+      newItems.push(newItem);
     }
   });
-  if (changed) persist();
+  if (newItems.length) syncWrite(() => dbInsertExpenseItemsBatch(newItems));
 }
 function getItemsForDate(dateStr) {
   materializeDate(dateStr);
@@ -369,11 +444,11 @@ function updateExpenseItem(id, patch) {
   const it = state.data.expenseItems.find((i) => i.id === id);
   if (!it) return;
   Object.assign(it, patch);
-  persist();
+  syncWrite(() => dbUpdateExpenseItem(id, patch));
 }
 function deleteExpenseItem(id) {
   state.data.expenseItems = state.data.expenseItems.filter((i) => i.id !== id);
-  persist();
+  syncWrite(() => dbDeleteExpenseItem(id));
 }
 
 // ----------------------- 모달 -----------------------
@@ -776,11 +851,14 @@ function openExpenseRegisterModal() {
 
     if (!amount || amount <= 0) { errorEl.textContent = '예상 금액을 올바르게 입력해주세요.'; return; }
 
+    let syncFn;
     if (repeatType === 'none') {
-      state.data.expenseItems.push({
+      const newItem = {
         id: uid(), date, categoryId, memo, expectedAmount: amount, actualAmount: null,
         paymentMethod: null, planned: true, reasonText: '', templateId: null,
-      });
+      };
+      state.data.expenseItems.push(newItem);
+      syncFn = () => dbInsertExpenseItem(newItem);
     } else {
       const template = {
         id: uid(), categoryId, memo, expectedAmount: amount,
@@ -794,11 +872,12 @@ function openExpenseRegisterModal() {
         template.dayOfMonth = Number(box.querySelector('#pi-day-of-month').value) || 1;
       }
       state.data.repeatTemplates.push(template);
+      syncFn = () => dbInsertTemplate(template);
     }
-    persist();
     closeModal();
     renderTab(state.tab);
     showToast('등록되었습니다.');
+    syncWrite(syncFn);
   });
 }
 
@@ -836,15 +915,16 @@ function openUnplannedExpenseModal() {
     if (!amount || amount <= 0) { errorEl.textContent = '금액을 올바르게 입력해주세요.'; return; }
     const payment = box.querySelector('#ue-payment').value;
     if (!payment) { errorEl.textContent = '결제수단을 선택해주세요.'; return; }
-    state.data.expenseItems.push({
+    const newItem = {
       id: uid(), date: box.querySelector('#ue-date').value, categoryId: box.querySelector('#ue-category').value,
       expectedAmount: null, actualAmount: amount, paymentMethod: payment,
       planned: false, reasonText: box.querySelector('#ue-reason').value.trim(), templateId: null,
-    });
-    persist();
+    };
+    state.data.expenseItems.push(newItem);
     closeModal();
     renderTab(state.tab);
     showToast('계획 외 지출이 등록되었습니다.');
+    syncWrite(() => dbInsertExpenseItem(newItem));
   });
 }
 
@@ -957,9 +1037,9 @@ function renderCategoryManager(el) {
         + state.data.repeatTemplates.filter((t) => t.categoryId === id).length;
       if (usedCount > 0 && !confirm(`이 카테고리를 사용하는 항목이 ${usedCount}개 있습니다. 그래도 삭제할까요?`)) return;
       state.data.categories = state.data.categories.filter((c) => c.id !== id);
-      persist();
       renderGoals();
       showToast('카테고리가 삭제되었습니다.');
+      syncWrite(() => dbDeleteCategory(id));
     };
   });
 
@@ -968,20 +1048,22 @@ function renderCategoryManager(el) {
     const input = el.querySelector('#new-expense-cat');
     const name = input.value.trim();
     if (!name) return;
-    state.data.categories.push({ id: uid(), name, type: 'expense', deletable: true });
-    persist();
+    const newCat = { id: uid(), name, type: 'expense', deletable: true };
+    state.data.categories.push(newCat);
     renderGoals();
     showToast('카테고리가 추가되었습니다.');
+    syncWrite(() => dbInsertCategory(newCat));
   });
   el.querySelector('#add-income-cat-form').addEventListener('submit', (e) => {
     e.preventDefault();
     const input = el.querySelector('#new-income-cat');
     const name = input.value.trim();
     if (!name) return;
-    state.data.categories.push({ id: uid(), name, type: 'income', deletable: true });
-    persist();
+    const newCat = { id: uid(), name, type: 'income', deletable: true };
+    state.data.categories.push(newCat);
     renderGoals();
     showToast('카테고리가 추가되었습니다.');
+    syncWrite(() => dbInsertCategory(newCat));
   });
 }
 
@@ -1018,17 +1100,18 @@ function renderRepeatManager(el) {
     b.onclick = () => {
       const t = templates.find((x) => x.id === b.dataset.id);
       t.active = !t.active;
-      persist();
       renderGoals();
+      syncWrite(() => dbUpdateTemplate(t.id, { active: t.active }));
     };
   });
   el.querySelectorAll('.delete-template-btn').forEach((b) => {
     b.onclick = () => {
       if (!confirm('이 반복 지출 설정을 삭제할까요? (이미 생성된 지출 항목은 유지됩니다)')) return;
-      state.data.repeatTemplates = templates.filter((x) => x.id !== b.dataset.id);
-      persist();
+      const id = b.dataset.id;
+      state.data.repeatTemplates = templates.filter((x) => x.id !== id);
       renderGoals();
       showToast('삭제되었습니다.');
+      syncWrite(() => dbDeleteTemplate(id));
     };
   });
 }
@@ -1099,10 +1182,10 @@ function openRepeatTemplateModal() {
       template.dayOfMonth = Number(box.querySelector('#rt-day-of-month').value) || 1;
     }
     state.data.repeatTemplates.push(template);
-    persist();
     closeModal();
     renderGoals();
     showToast('반복 지출이 등록되었습니다.');
+    syncWrite(() => dbInsertTemplate(template));
   });
 }
 
@@ -1147,10 +1230,11 @@ function renderAssets() {
   el.querySelectorAll('.delete-asset-btn').forEach((b) => {
     b.onclick = () => {
       if (!confirm('이 자산을 삭제할까요?')) return;
-      state.data.assets = assets.filter((a) => a.id !== b.dataset.id);
-      persist();
+      const id = b.dataset.id;
+      state.data.assets = assets.filter((a) => a.id !== id);
       renderAssets();
       showToast('삭제되었습니다.');
+      syncWrite(() => dbDeleteAsset(id));
     };
   });
 }
@@ -1173,15 +1257,19 @@ function openAssetModal(existing) {
     const name = box.querySelector('#asset-name').value.trim();
     const amount = parseAmountInputValue(box.querySelector('#asset-amount').value);
     if (!name || isNaN(amount)) return;
+    let syncFn;
     if (existing) {
       Object.assign(existing, { name, amount, updatedAt: todayStr() });
+      syncFn = () => dbUpdateAsset(existing.id, { name, amount, updatedAt: existing.updatedAt });
     } else {
-      state.data.assets.push({ id: uid(), name, amount, updatedAt: todayStr() });
+      const newAsset = { id: uid(), name, amount, updatedAt: todayStr() };
+      state.data.assets.push(newAsset);
+      syncFn = () => dbInsertAsset(newAsset);
     }
-    persist();
     closeModal();
     renderAssets();
     showToast('저장되었습니다.');
+    syncWrite(syncFn);
   });
 }
 
@@ -1211,6 +1299,4 @@ document.addEventListener('DOMContentLoaded', () => {
       switchTab(btn.dataset.tab);
     });
   });
-
-  initSession();
 });
