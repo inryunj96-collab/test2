@@ -383,7 +383,10 @@ async function handleLogout() {
 }
 
 async function handleGoogleLogin() {
-  await sb.auth.signInWithOAuth({ provider: 'google' });
+  await sb.auth.signInWithOAuth({
+    provider: 'google',
+    options: { redirectTo: window.location.origin + window.location.pathname },
+  });
 }
 
 // ----------------------- 탭 전환 -----------------------
